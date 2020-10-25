@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: matacr.azurecr.io
+        username: ${{ secrets.acr_matacr_username }}
+        password: ${{ secrets.acr_matacr_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/" -f  "Dockerfile" -t matacr.azurecr.io/matkuber:${{ github.sha }}
+        docker push matacr.azurecr.io/matkuber:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_matkuber_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep matkuberb4ca | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace matkuberb4ca`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: matkuberb4ca
+        container-registry-url: matacr.azurecr.io
+        container-registry-username: ${{ secrets.acr_matacr_username }}
+        container-registry-password: ${{ secrets.acr_matacr_password }}
+        secret-name: matkuberdockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: matkuberb4ca
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          matacr.azurecr.io/matkuber:${{ github.sha }}
+        imagepullsecrets: |
+          matkuberdockerauth
